@@ -493,6 +493,36 @@ wsl --install
 
 ---
 
+## 必須依存一覧とプリフライト検査
+
+### 必須依存
+
+起動前に以下の依存が必要です。`./shutsujin_departure.sh` 実行時に自動チェックされます。
+
+| 依存 | OS | 用途 | 欠落時 | 導入コマンド |
+|------|-----|------|--------|--------------|
+| inotifywait | Linux | inbox 変更検知 (inbox_watcher) | 起動中止 | `sudo apt install inotify-tools` |
+| fswatch | macOS | inbox 変更検知 (inbox_watcher) | 起動中止 | `brew install fswatch` |
+| tmux | 全OS | マルチエージェント画面管理 | 起動中止 | `sudo apt install tmux` / `brew install tmux` |
+| python3 | 全OS | stop hook・watcher の JSON/YAML 処理 | 起動中止 | OS付属 / `brew install python3` |
+| .venv/bin/python3 | 全OS | inbox_watcher の YAML 処理 | 起動中止 | `python3 -m venv .venv && .venv/bin/pip install pyyaml` |
+| PyYAML (.venv) | 全OS | YAML パース (watcher) | 警告のみ・続行 | `.venv/bin/pip install pyyaml` |
+| flock | Linux | inbox 排他書き込み | 警告のみ・続行 | 多くの環境で標準装備 |
+| pgrep | 全OS | watcher 生存確認 | 警告のみ・続行 | `sudo apt install procps` |
+
+### プリフライト検査の仕様
+
+- **配置**: `./shutsujin_departure.sh`（前景）と `scripts/watcher_supervisor.sh`（副）の入口で実行
+- **実行**: `bash scripts/preflight_check.sh`（単独でも実行可）
+- **終了コード**:
+  - `0` = 正常（警告のみの欠落を含む）
+  - `1` = 致命依存欠落 → 起動中止
+  - `2` = プリフライト内部エラー
+- **出力**: 欠落 dep 名と導入コマンドを色付きで表示（ntfy が設定済みなら push 通知も）
+- **冪等**: 複数回実行しても副作用なし・高速
+
+---
+
 ### ✅ セットアップ後の状態
 
 どちらのオプションでも、**10体のAIエージェント**が自動起動します：

@@ -17,7 +17,7 @@ CLI_ADAPTER_PROJECT_ROOT="$(cd "${CLI_ADAPTER_DIR}/.." && pwd)"
 CLI_ADAPTER_SETTINGS="${CLI_ADAPTER_SETTINGS:-${CLI_ADAPTER_PROJECT_ROOT}/config/settings.yaml}"
 
 # 許可されたCLI種別
-CLI_ADAPTER_ALLOWED_CLIS="claude codex copilot kimi opencode"
+CLI_ADAPTER_ALLOWED_CLIS="claude codex copilot kimi opencode gemini"
 
 # normalize_opencode_model(model)
 # OpenCode向けにprovider-qualifiedなモデル名へ正規化する。
@@ -146,13 +146,13 @@ try:
     agent_cfg = agents.get('${agent_id}')
     if isinstance(agent_cfg, dict):
         t = agent_cfg.get('type', '')
-        if t in ('claude', 'codex', 'copilot', 'kimi', 'opencode'):
+        if t in ('claude', 'codex', 'copilot', 'kimi', 'opencode', 'gemini'):
             print(t); sys.exit(0)
     elif isinstance(agent_cfg, str):
-        if agent_cfg in ('claude', 'codex', 'copilot', 'kimi', 'opencode'):
+        if agent_cfg in ('claude', 'codex', 'copilot', 'kimi', 'opencode', 'gemini'):
             print(agent_cfg); sys.exit(0)
     default = cli.get('default', 'claude')
-    if default in ('claude', 'codex', 'copilot', 'kimi', 'opencode'):
+    if default in ('claude', 'codex', 'copilot', 'kimi', 'opencode', 'gemini'):
         print(default)
     else:
         print('claude', file=sys.stderr)
@@ -238,6 +238,12 @@ build_cli_command() {
                 cmd="$cmd --model $model"
             fi
             ;;
+        gemini)
+            cmd="gemini --yolo"
+            if [[ -n "$model" ]]; then
+                cmd="$cmd --model $model"
+            fi
+            ;;
         *)
             cmd="claude $permission_flag"
             ;;
@@ -276,6 +282,7 @@ get_instruction_file() {
         copilot) echo ".github/copilot-instructions-${role}.md" ;;
         kimi)    echo "instructions/generated/kimi-${role}.md" ;;
         opencode) echo "instructions/generated/opencode-${role}.md" ;;
+        gemini)  echo "GEMINI.md" ;;
         *)       echo "instructions/${role}.md" ;;
     esac
 }
@@ -315,6 +322,12 @@ validate_cli_availability() {
                 echo "[ERROR] Kimi CLI not found. Install from https://platform.moonshot.cn/" >&2
                 return 1
             fi
+            ;;
+        gemini)
+            command -v gemini &>/dev/null || {
+                echo "[ERROR] Gemini CLI not found. Install with: npm install -g @google/gemini-cli" >&2
+                return 1
+            }
             ;;
         *)
             echo "[ERROR] Unknown CLI type: '$cli_type'. Allowed: $CLI_ADAPTER_ALLOWED_CLIS" >&2
@@ -405,6 +418,9 @@ get_model_display_name() {
         *sonnet*)               short="Sonnet" ;;
         *haiku*)                short="Haiku" ;;
         *k2.5*|*kimi*)          short="Kimi" ;;
+        *gemini-2.5-flash*)     short="Gemini-Flash" ;;
+        *gemini-2.5-pro*)       short="Gemini-Pro" ;;
+        *gemini*)               short="Gemini" ;;
         *)
             # CLI種別から推測
             case "$cli_type" in
@@ -816,6 +832,7 @@ can_model_switch() {
         codex)   echo "limited" ;;
         copilot) echo "none" ;;
         kimi)    echo "none" ;;
+        gemini)  echo "none" ;;
         *)       echo "none" ;;
     esac
 }

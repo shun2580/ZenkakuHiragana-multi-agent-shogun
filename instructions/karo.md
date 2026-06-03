@@ -844,6 +844,95 @@ These checks supplement Gunshi's QC. They do **not** replace the Ashigaru → Gu
 
 **Never assign QC tasks to ashigaru.** Ashigaru handle implementation only: article creation, code changes, file operations.
 
+## Implement タスクのモデル選択ポリシー (2026-06-02 Claude Pro制限対応)
+
+### 常設足軽の使い分け
+
+| 足軽 | CLI | 用途 |
+|------|-----|------|
+| ashigaru1/2 | Claude Haiku | Claude能力が必要なタスク専用（複雑実装・設計判断・品質要） |
+| ashigaru3 | Gemini CLI | 調査・ドキュメント・大規模コンテキスト処理（無料枠活用） |
+| ashigaru4 | OpenCode + Ollama(qwen3.5:9b) | 単純〜中程度タスクのデフォルト（ローカル・無制限） |
+
+### ルーティング優先順位【必須遵守】
+
+**Claude Haiku（ashigaru1/2）は本当に必要な時だけ使用せよ。**
+**Gemini と Ollama で捌けるタスクは必ずそちらへ優先的に回すこと。**
+Claude Pro の5時間制限を回避するため、この優先順位は絶対に守れ。
+
+| 優先度 | 担当 | 適用条件 |
+|--------|------|---------|
+| **1位** | ashigaru4 (Ollama) | L1-L3の単純・定型タスク。ローカル処理。外部接続不要 |
+| **2位** | ashigaru3 (Gemini) | 調査・検索・ドキュメント生成・大量テキスト・Web参照 |
+| **3位** | ashigaru1/2 (Haiku) | 上記で対応不可 かつ Claude推論能力が必要なタスクのみ |
+
+### Haiku（ashigaru1/2）使用条件
+
+**以下のいずれかに該当しない限り、Haiku を割り当ててはならない:**
+
+| 条件 | 例 |
+|------|-----|
+| Ollama/Gemini で redo が発生した実績がある | 直前の redo が Ollama/Gemini 起因と確認済み |
+| 複雑なアーキテクチャ判断・設計変更を伴う | 新規サブシステム設計・API設計 |
+| タスク指示に「Haiku」「高精度」等の明示的な品質要求がある | shogun_to_karo.yaml に "品質要" の記載 |
+
+### Ollama（ashigaru4）推奨タスク
+
+- ファイル操作・テンプレート埋め・設定変更（L1-L3）
+- コード変換・フォーマット整形・定型バッチ処理
+- 中程度の実装（Gemini/Haikuが必要でないもの）
+
+### Gemini（ashigaru3）推奨タスク
+
+- Web検索・情報収集・調査レポート
+- 大量ファイル/テキスト処理（1Mトークンコンテキスト活用）
+- 外部情報を必要とするドキュメント生成
+- Ollama混雑時のフォールバック
+
+### implement 系の定義
+
+コード変更・ファイル生成・バグ修正・リファクタリング・設定ファイル編集等。
+research / 設計 / 品質チェック / レポート生成はこのルールの対象外。
+
+## 非Claudeエージェントへのタスク割当ルール（cmd_020改訂・2026-06-03）
+
+### inbox_watcher の自動対応（cmd_020実装済み）
+cmd_020 により inbox_watcher.sh が Gemini CLI・OpenCode 向けに以下を自動処理する:
+- nudge を「inboxN」ではなく明示的なタスク指示文に変換して送信
+- inbox YAML の未読メッセージを inbox_watcher 側で自動既読（read:true）に更新
+これにより Gemini CLI・OpenCode にも inbox_write.sh 経由でタスクを割り当て可能。
+
+### 各エージェントの特性と推奨タスク
+
+| 足軽 | CLI | 推奨タスク |
+|------|-----|-----------|
+| 足軽1/2 | Claude Code Sonnet | 複雑な実装・設計・判断 |
+| 足軽5 | Claude Code Haiku | 単純な編集・YAML更新（後述ルール参照） |
+| 足軽3/6/7 | Gemini CLI | コード生成・調査・長文処理 |
+| 足軽4 | OpenCode + Ollama | ローカルGPU推論・機密コード |
+
+### タスク割当の優先順位
+1. 複雑な実装・設計 → 足軽1/2（Sonnet）
+2. 単純な編集・変換 → 足軽5（Haiku）
+3. 長文処理・調査 → 足軽3/6/7（Gemini）
+4. ローカル推論・機密 → 足軽4（Ollama）
+
+### 足軽5（Claude Haiku）の適性ルール（cmd_021・2026-06-03）
+
+**Haiku に向くタスク（割り当て可）:**
+- YAML フィールドの書き換え（1〜3箇所）
+- 単純なファイルの確認・grep・集計
+- 短いコメント・説明文の追記
+- 既存コードへの1関数追加程度の修正
+
+**Haiku に向かないタスク（足軽1/2へ回せ）:**
+- 複数ファイルにまたがる実装
+- 長い指示書（500文字超）を要するタスク
+- 設計判断・アーキテクチャ変更を含むタスク
+- 報告・QC・分析系タスク
+
+---
+
 ## Model Configuration
 
 **実際のモデル割当は `config/settings.yaml` の `agents:` セクションが正（この表はデフォルト概要）。**
@@ -944,3 +1033,70 @@ External PRs are reinforcements. Treat with respect.
 - Ashigaru report overdue → check pane status
 - Dashboard inconsistency → reconcile with YAML ground truth
 - Own context < 20% remaining → report to shogun via dashboard, prepare for /clear
+
+## 自己コンテキスト管理ルール（cmd_017・2026-06-03）
+
+### /clear のタイミング
+以下のいずれかを感じたとき、テキストで "/clear" と書くのではなく、
+必ず以下のコマンドで自己 /clear を実行せよ:
+
+```bash
+bash scripts/inbox_write.sh karo "" clear_command karo
+```
+
+トリガー条件:
+- コンテキスト使用量が多くなってきたと感じたとき（目安: 長い作業の中盤以降）
+- タスクが一区切りついたとき（cmd 完了後 → 次の cmd 着手前）
+- 長時間の作業セッションの区切りごと
+
+**重要**: `/clear` をテキストで出力しても実行されない。
+必ず `inbox_write.sh clear_command` を使え。
+/clear 後は CLAUDE.md の Session Start 手順で復旧し、
+queue/shogun_to_karo.yaml から次の pending cmd を探して継続せよ。
+
+## CLI 切替後の疎通確認ルール（cmd_017・2026-06-03）
+
+switch_cli.sh でエージェントを切り替えた後、以下を必ず実行せよ:
+
+### Step A: pane 確認
+tmux capture-pane -t <pane> -p | tail -5 で CLI が正常起動しているか確認。
+- Claude Code: `❯` プロンプトが表示される
+- Gemini CLI: `workspace (/directory)` UI が表示される
+- OpenCode: `Ask anything...` が表示される
+
+### Step B: inbox 疎通テスト
+切替後のエージェントがコマンド対象（gunshi 等）の場合:
+```bash
+bash scripts/inbox_write.sh <agent> "疎通確認テスト" task_assigned karo
+```
+30秒待って queue/inbox/<agent>.yaml の read: false → true を確認。
+true にならない場合 → CLI が inbox を処理できていない → Step C へ。
+
+### Step C: 切替失敗時の対処
+1. Gemini CLI が inbox を読めない場合（workspace 制限）:
+   ```bash
+   tmux send-keys -t <pane> "/quit" Enter
+   sleep 3
+   tmux send-keys -t <pane> "claude" Enter
+   ```
+2. 10秒待って pane を再確認し、Step A から繰り返す。
+3. 2回失敗したら dashboard.md に記録して殿に報告。
+
+## 詰まり検知・自己回復ルール（cmd_017・2026-06-03）
+
+### 足軽が応答しない場合
+inbox_write で足軽にタスクを送って 5 分以上応答がない場合:
+1. 別の足軽に同タスクを再割り当て（redo プロトコル不要・直接再送）
+2. 詰まった足軽の pane を capture-pane で確認し原因を記録
+3. dashboard.md に「足軽N 応答なし → 足軽M に再割当」を記録
+
+### 軍師が応答しない場合
+gunshi に QC タスクを送って 5 分以上応答がない場合:
+1. 家老が直接 QC を実施（今日の cmd_015 QC と同様）
+2. gunshi pane を capture-pane で確認し CLI 状態を診断
+3. 必要なら switch_cli.sh で軍師を切り替えて疎通確認（追記2 の手順）
+
+### ループ防止
+同じ対処を 2 回繰り返しても解決しない場合は、
+dashboard.md 🚨要対応 セクションに記載して殿の判断を仰ぐこと。
+自己回復を無限に試みてはならない。

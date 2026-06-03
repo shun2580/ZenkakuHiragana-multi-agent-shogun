@@ -489,6 +489,36 @@ If you prefer to install dependencies manually:
 
 ---
 
+## Required Dependencies and Preflight Check
+
+### Required Dependencies
+
+The following dependencies are required before launch. They are automatically checked when running `./shutsujin_departure.sh`.
+
+| Dependency | OS | Purpose | If missing | Install command |
+|------------|-----|---------|------------|-----------------|
+| inotifywait | Linux | Inbox change detection (inbox_watcher) | Launch aborted | `sudo apt install inotify-tools` |
+| fswatch | macOS | Inbox change detection (inbox_watcher) | Launch aborted | `brew install fswatch` |
+| tmux | All | Multi-agent terminal management | Launch aborted | `sudo apt install tmux` / `brew install tmux` |
+| python3 | All | JSON/YAML processing in stop hook and watcher | Launch aborted | Included with OS / `brew install python3` |
+| .venv/bin/python3 | All | YAML processing in inbox_watcher | Launch aborted | `python3 -m venv .venv && .venv/bin/pip install pyyaml` |
+| PyYAML (.venv) | All | YAML parsing in watcher | Warning only, continues | `.venv/bin/pip install pyyaml` |
+| flock | Linux | Exclusive inbox writes | Warning only, continues | Included in most environments |
+| pgrep | All | Watcher liveness check | Warning only, continues | `sudo apt install procps` |
+
+### Preflight Check Specification
+
+- **Placement**: Runs at the entry of `./shutsujin_departure.sh` (foreground) and `scripts/watcher_supervisor.sh` (secondary)
+- **Run standalone**: `bash scripts/preflight_check.sh`
+- **Exit codes**:
+  - `0` = OK (warning-only missing deps included)
+  - `1` = Fatal dependency missing → launch aborted
+  - `2` = Preflight internal error
+- **Output**: Displays missing dep names and install commands in color (sends push notification if ntfy is configured)
+- **Idempotent**: No side effects on repeated runs, fast
+
+---
+
 ### After Setup
 
 Whichever option you chose, **10 AI agents** are automatically launched:

@@ -690,7 +690,7 @@ if [ "$SETUP_ONLY" = false ]; then
 
     # 将軍: CLI Adapter経由でコマンド構築
     _shogun_cli_type="claude"
-    _shogun_cmd="claude --model opus --effort max $PERMISSION_FLAG"
+    _shogun_cmd="claude --model sonnet --effort max $PERMISSION_FLAG"  # Pro: Opus不可。settings.yaml が正、本行はadapter未読時のフォールバック
     if [ "$CLI_ADAPTER_LOADED" = true ]; then
         _shogun_cli_type=$(get_cli_type "shogun")
         _shogun_cmd=$(build_cli_command "shogun")
@@ -775,7 +775,7 @@ with open(f,'w') as fh: yaml.safe_dump(d, fh, default_flow_style=False, allow_un
     # 軍師（pane _ASHIGARU_COUNT+1）: Opus Thinking — 戦略立案・設計判断専任
     p=$((PANE_BASE + _ASHIGARU_COUNT + 1))
     _gunshi_cli_type="claude"
-    _gunshi_cmd="claude --model opus --effort max $PERMISSION_FLAG"
+    _gunshi_cmd="claude --model sonnet --effort max $PERMISSION_FLAG"  # Pro: Opus不可。settings.yaml が正、本行はadapter未読時のフォールバック
     if [ "$CLI_ADAPTER_LOADED" = true ]; then
         _gunshi_cli_type=$(get_cli_type "gunshi")
         _gunshi_cmd=$(build_cli_command "gunshi")
@@ -876,6 +876,14 @@ NINJA_EOF
         fi
         sleep 1
     done
+
+    # ═══════════════════════════════════════════════════════════════════
+    # STEP 6.5: プリフライト依存検査 (inotifywait/fswatch 等)
+    # ═══════════════════════════════════════════════════════════════════
+    if ! bash "$SCRIPT_DIR/scripts/preflight_check.sh"; then
+        echo -e "\033[1;31m【ERROR】\033[0m 必須依存が欠落しています。上記の導入コマンドを実行後、再起動してください。"
+        exit 1
+    fi
 
     # ═══════════════════════════════════════════════════════════════════
     # STEP 6.6: inbox_watcher起動（全エージェント）
@@ -1078,18 +1086,25 @@ echo "   天下布武！勝利を掴め！ (Tenka Fubu! Seize victory!)"
 echo "  ════════════════════════════════════════════════════════════"
 echo ""
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STEP 8: Windows Terminal でタブを開く（-t オプション時のみ）
-# ═══════════════════════════════════════════════════════════════════════════════
-if [ "$OPEN_TERMINAL" = true ]; then
-    log_info "📺 Windows Terminal でタブを展開中..."
-
-    # Windows Terminal が利用可能か確認
-    if command -v wt.exe &> /dev/null; then
-        wt.exe -w 0 new-tab wsl.exe -e bash -c "tmux attach-session -t shogun" \; new-tab wsl.exe -e bash -c "tmux attach-session -t multiagent"
-        log_success "  └─ ターミナルタブ展開完了"
-    else
-        log_info "  └─ wt.exe が見つかりません。手動でアタッチしてください。"
-    fi
+# STEP 8: Windows Terminal 自動タブ展開（wt.exe 環境では常時実行）
+# -t フラグは後方互換のため残すが、wt.exe があれば常に自動実行する
+if [ "$SETUP_ONLY" = false ] && command -v wt.exe &>/dev/null; then
+    log_info "📺 Windows Terminal で multiagent タブを自動展開中..."
+    wt.exe -w 0 new-tab wsl.exe -e bash -c "tmux attach-session -t multiagent" &
+    log_success "  └─ multiagent タブを展開完了（新タブで自動表示されます）"
     echo ""
+elif [ "$OPEN_TERMINAL" = true ]; then
+    log_info "📺 wt.exe が見つかりません。手動でアタッチしてください。"
+    echo ""
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 9: shogun セッションに自動アタッチ
+# ─────────────────────────────────────────────────────────────────────────────
+# -s / --setup-only 時はスキップ（手動起動モードのため）
+# ═══════════════════════════════════════════════════════════════════════════════
+if [ "$SETUP_ONLY" = false ]; then
+    log_info "👑 将軍の本陣に接続中..."
+    sleep 1
+    exec tmux attach-session -t shogun
 fi

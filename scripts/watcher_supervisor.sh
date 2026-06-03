@@ -81,6 +81,12 @@ if [ "${1:-}" = "--print-watchers" ]; then
     exit 0
 fi
 
+# Preflight check (致命依存欠落なら中止)
+if ! bash "$SCRIPT_DIR/scripts/preflight_check.sh"; then
+    echo "[$(date)] [FATAL] 必須依存が欠落。起動を中止します。" >&2
+    exit 1
+fi
+
 while true; do
     start_all_watchers
     sleep 5

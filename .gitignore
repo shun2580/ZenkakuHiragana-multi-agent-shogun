@@ -106,11 +106,19 @@
 !scripts/seo_qc.py
 !scripts/seo_qc.sh
 !scripts/stop_hook_inbox.sh
+!scripts/preflight_check.sh
 !scripts/session_start_hook.sh
 !scripts/agent_status.sh
 !scripts/ratelimit_check.sh
 !scripts/switch_cli.sh
 !scripts/dashboard-viewer.py
+
+# Queue directories
+!queue/
+!queue/tasks/
+
+# Gunshi Task File
+!queue/tasks/gunshi.yaml
 
 
 # SayTask (sample template only, not actual data)
@@ -128,6 +136,7 @@ logs/
 !docs/
 !docs/philosophy.md
 !docs/vps_pr118_verification_plan.md
+!docs/my_setup.md
 
 # Screenshots (masked — no secrets)
 !images/

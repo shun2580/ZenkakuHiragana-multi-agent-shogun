@@ -21,7 +21,8 @@ if [ -z "$TARGET" ] || [ -z "$CONTENT" ] || [ -z "$TYPE" ] || [ -z "$FROM" ]; th
 fi
 
 # Self-send guard: reject messages where sender == target
-if [ "$FROM" = "$TARGET" ]; then
+# Exception: clear_command type is allowed for self-send (karo self-/clear use case)
+if [ "$FROM" = "$TARGET" ] && [ "$TYPE" != "clear_command" ]; then
     echo "[inbox_write] REJECTED: self-send detected (from=$FROM, target=$TARGET)" >&2
     exit 1
 fi

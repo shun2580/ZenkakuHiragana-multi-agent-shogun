@@ -397,9 +397,29 @@ else
         RESULTS+=("file-watcher: OK (inotifywait)")
     else
         log_warn "inotify-tools がインストールされていません"
+        echo ""
+
         if command -v apt-get &> /dev/null; then
             log_info "inotify-tools をインストール中..."
-            if sudo apt-get install -y inotify-tools 2>/dev/null; then
+            if ! sudo -n apt-get update -qq 2>/dev/null; then
+                if ! sudo apt-get update -qq 2>/dev/null; then
+                    log_error "sudo の実行に失敗しました。ターミナルから直接実行してください"
+                    RESULTS+=("file-watcher: インストール失敗 (sudo失敗)")
+                    HAS_ERROR=true
+                fi
+            fi
+
+            if [ "$HAS_ERROR" != true ]; then
+                if ! sudo -n apt-get install -y inotify-tools 2>/dev/null; then
+                    if ! sudo apt-get install -y inotify-tools 2>/dev/null; then
+                        log_error "inotify-tools のインストールに失敗しました"
+                        RESULTS+=("file-watcher: インストール失敗")
+                        HAS_ERROR=true
+                    fi
+                fi
+            fi
+
+            if command -v inotifywait &> /dev/null; then
                 log_success "inotify-tools インストール完了"
                 RESULTS+=("file-watcher: インストール完了 (inotifywait)")
             else
@@ -408,8 +428,12 @@ else
                 HAS_ERROR=true
             fi
         else
-            log_error "手動で inotify-tools をインストールしてください"
-            RESULTS+=("file-watcher: 未インストール")
+            log_error "apt-get が見つかりません。手動で inotify-tools をインストールしてください"
+            echo ""
+            echo "  インストール方法:"
+            echo "    Ubuntu/Debian: sudo apt-get install inotify-tools"
+            echo "    Fedora/RHEL:   sudo dnf install inotify-tools"
+            RESULTS+=("file-watcher: 未インストール (手動インストール必要)")
             HAS_ERROR=true
         fi
     fi

@@ -48,13 +48,20 @@ log() {
     echo "$msg" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+# ─── fixed フラグ確認 ───
+get_agent_fixed() {
+    local agent_id="$1"
+    _cli_adapter_read_yaml "cli.agents.${agent_id}.fixed" "false"
+}
+
 # ─── Usage ───
 usage() {
     echo "Usage: $0 <agent_id> [--type <cli_type>] [--model <model_name>]"
     echo ""
     echo "  agent_id   Agent configured in config/settings.yaml (e.g. karo, ashigaru1, gunshi)"
-    echo "  --type     claude | codex | copilot | kimi | opencode"
+    echo "  --type     claude | codex | copilot | kimi | opencode | gemini"
     echo "  --model    claude-sonnet-4-6 | claude-opus-4-6 | gpt-5.3-codex | openai/gpt-5.4-mini | etc."
+    echo "  --force    Override fixed: true protection (emergency use only)"
     echo ""
     echo "If --type/--model omitted, uses current settings.yaml values."
     exit 1
@@ -231,7 +238,7 @@ send_exit() {
             sleep 0.3
             tmux send-keys -t "$pane" Enter 2>/dev/null || true
             ;;
-        copilot|kimi)
+        copilot|kimi|gemini)
             tmux send-keys -t "$pane" C-c 2>/dev/null || true
             sleep 0.5
             tmux send-keys -t "$pane" "/exit" 2>/dev/null || true
@@ -315,6 +322,7 @@ shift
 
 NEW_TYPE=""
 NEW_MODEL=""
+FORCE=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -325,6 +333,10 @@ while [ $# -gt 0 ]; do
         --model)
             NEW_MODEL="$2"
             shift 2
+            ;;
+        --force)
+            FORCE=true
+            shift
             ;;
         --help|-h)
             usage
@@ -370,6 +382,17 @@ if [[ -n "$NEW_MODEL" && -z "$NEW_TYPE" ]]; then
             log "Auto-inferred type=claude from model=${NEW_MODEL}"
             ;;
     esac
+fi
+
+# fixed エージェントの保護チェック
+if [[ "$(get_agent_fixed "$AGENT_ID")" == "true" ]] && [[ "$FORCE" != "true" ]]; then
+    log "ERROR: ${AGENT_ID} has fixed: true in settings.yaml. CLI switch refused."
+    log "To override, use: bash scripts/switch_cli.sh ${AGENT_ID} --force --type <type> --model <model>"
+    echo "ERROR: ${AGENT_ID} is fixed. Use --force to override." >&2
+    exit 1
+fi
+if [[ "$(get_agent_fixed "$AGENT_ID")" == "true" ]] && [[ "$FORCE" == "true" ]]; then
+    log "WARN: ${AGENT_ID} has fixed: true but --force was specified. Proceeding."
 fi
 
 # Step 1: settings.yaml 更新（--type/--model 指定時のみ）

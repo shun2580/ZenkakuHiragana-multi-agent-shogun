@@ -258,7 +258,7 @@ should_throttle_nudge() {
 
 is_valid_cli_type() {
     case "${1:-}" in
-        claude|codex|copilot|kimi|opencode) return 0 ;;
+        claude|codex|copilot|kimi|opencode|gemini) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -702,6 +702,7 @@ send_context_reset() {
         claude)   reset_cmd="/clear" ;;
         copilot)  reset_cmd="/clear" ;;
         kimi)     reset_cmd="/clear" ;;
+        gemini)   reset_cmd="/clear" ;;
         *)        reset_cmd="/new" ;;  # safe default (codex-safe)
     esac
 
@@ -880,6 +881,31 @@ send_wakeup() {
     # Sequence: "x" (dismiss suggestion) → C-u (clear input) → nudge → Enter
     local effective_cli_for_nudge
     effective_cli_for_nudge=$(get_effective_cli_type)
+
+    # OpenCode/Gemini agents: use explicit instruction instead of terse "inboxN"
+    # These agents cannot parse "inbox2" as a protocol trigger
+    if [[ "$effective_cli_for_nudge" == "opencode" ]] || [[ "$effective_cli_for_nudge" == "gemini" ]]; then
+        nudge="queue/inbox/${AGENT_ID}.yaml と queue/tasks/${AGENT_ID}.yaml を Read してタスクを実行せよ。完了後 scripts/inbox_write.sh で軍師に報告すること。"
+    fi
+
+    # 非Claudeエージェント（gemini/opencode）は inbox を自律的に read:true にできない
+    # inbox_watcher 側で自動既読にすることで重複 nudge を防ぐ
+    if [[ "$effective_cli_for_nudge" == "gemini" ]] || [[ "$effective_cli_for_nudge" == "opencode" ]]; then
+        python3 -c "
+import sys, re
+path = '${INBOX}'
+try:
+    with open(path, 'r') as f:
+        content = f.read()
+    updated = re.sub(r'read: false', 'read: true', content)
+    with open(path, 'w') as f:
+        f.write(updated)
+    print('[auto-mark] Marked all messages as read for ${AGENT_ID}', file=sys.stderr)
+except Exception as e:
+    print(f'[auto-mark] Failed: {e}', file=sys.stderr)
+" 2>&1 >&2 || true
+    fi
+
     if [[ "$effective_cli_for_nudge" == "codex" ]]; then
         timeout 5 tmux send-keys -t "$PANE_TARGET" "x" 2>/dev/null || true
         sleep 0.3
