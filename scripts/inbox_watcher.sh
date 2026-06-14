@@ -120,6 +120,20 @@ LAST_CLEAR_TS=${LAST_CLEAR_TS:-0}
 ESCALATE_PHASE1=${ESCALATE_PHASE1:-120}
 ESCALATE_PHASE2=${ESCALATE_PHASE2:-240}
 ESCALATE_COOLDOWN=${ESCALATE_COOLDOWN:-300}
+# Local LLM (opencode/ollama) responds legitimately slowly (observed 150-300s).
+# The default 120s/240s thresholds misjudge slow-but-working inference as
+# "unresponsive" and bombard the TUI with send-keys mid-render, corrupting the
+# PTY → setRawMode errno5 crash. Use generous thresholds for opencode.
+ESCALATE_PHASE1_OPENCODE=${ESCALATE_PHASE1_OPENCODE:-600}
+ESCALATE_PHASE2_OPENCODE=${ESCALATE_PHASE2_OPENCODE:-900}
+
+# ─── Auto-heal watchdog (cmd_xxx: self-recovery for crashed TUI CLIs) ───
+# A TUI crash (e.g. opencode setRawMode errno5) leaves the pane at a bare shell.
+# Detect that state and relaunch the configured CLI via switch_cli.sh.
+ASW_AUTO_HEAL=${ASW_AUTO_HEAL:-1}
+HEAL_COOLDOWN_SEC=${HEAL_COOLDOWN_SEC:-120}
+DEAD_CLI_STREAK=0
+LAST_HEAL_TS=0
 
 # ─── Nudge throttle ───
 # Avoid spamming the same "inboxN" into the pane every timeout tick.
@@ -128,6 +142,8 @@ LAST_NUDGE_COUNT=${LAST_NUDGE_COUNT:-""}
 NUDGE_COOLDOWN_SEC=${NUDGE_COOLDOWN_SEC:-60}
 # Codex は「思考中に入力が入ると即拾う」挙動があり、思考がループすることがあるため長めにする。
 NUDGE_COOLDOWN_SEC_CODEX=${NUDGE_COOLDOWN_SEC_CODEX:-300}
+# OpenCode/局所LLM は応答が遅く、推論中の send-keys 連打が TUI の PTY を壊す。長めに間引く。
+NUDGE_COOLDOWN_SEC_OPENCODE=${NUDGE_COOLDOWN_SEC_OPENCODE:-300}
 
 reset_nudge_throttle() {
     LAST_NUDGE_TS=0
@@ -236,6 +252,9 @@ should_throttle_nudge() {
     local cooldown_sec="${NUDGE_COOLDOWN_SEC:-60}"
     if [[ "$effective_cli" == "codex" ]]; then
         cooldown_sec="${NUDGE_COOLDOWN_SEC_CODEX:-300}"
+    elif [[ "$effective_cli" == "opencode" ]]; then
+        # OpenCode/local LLM: slow inference; throttle send-keys hard to protect the TUI PTY.
+        cooldown_sec="${NUDGE_COOLDOWN_SEC_OPENCODE:-300}"
     elif [[ "$effective_cli" == "claude" ]]; then
         # Claude Code: same cooldown as default (60s).
         # Stop hook is supplementary, not primary — nudge immediately.
@@ -897,7 +916,7 @@ path = '${INBOX}'
 try:
     with open(path, 'r') as f:
         content = f.read()
-    updated = re.sub(r'read: false', 'read: true', content)
+    updated = re.sub(r'^(\s+read: )false', r'\1true', content, flags=re.MULTILINE)
     with open(path, 'w') as f:
         f.write(updated)
     print('[auto-mark] Marked all messages as read for ${AGENT_ID}', file=sys.stderr)
@@ -1209,7 +1228,17 @@ for s in data.get('specials', []):
 
         local age=$((now - FIRST_UNREAD_SEEN))
 
-        if [ "$age" -lt "$ESCALATE_PHASE1" ]; then
+        # CLI-aware escalation thresholds. Local LLMs (opencode) respond slowly;
+        # the default 120s/240s windows misjudge active inference as unresponsive
+        # and corrupt the TUI PTY with mid-render send-keys (setRawMode errno5).
+        local phase1=$ESCALATE_PHASE1
+        local phase2=$ESCALATE_PHASE2
+        if [[ "$(get_effective_cli_type)" == "opencode" ]]; then
+            phase1=${ESCALATE_PHASE1_OPENCODE:-600}
+            phase2=${ESCALATE_PHASE2_OPENCODE:-900}
+        fi
+
+        if [ "$age" -lt "$phase1" ]; then
             # Phase 1 (0-2 min): Standard nudge
             echo "[$(date)] $normal_count unread for $AGENT_ID (${age}s)" >&2
             if disable_normal_nudge; then
@@ -1217,7 +1246,7 @@ for s in data.get('specials', []):
             else
                 send_wakeup "$normal_count"
             fi
-        elif [ "$age" -lt "$ESCALATE_PHASE2" ]; then
+        elif [ "$age" -lt "$phase2" ]; then
             # Phase 2 (2-4 min): Escape + nudge
             echo "[$(date)] $normal_count unread for $AGENT_ID (${age}s — escalating: Escape+nudge)" >&2
             send_wakeup_with_escape "$normal_count"
@@ -1283,6 +1312,46 @@ if [ "${__INBOX_WATCHER_TESTING__:-}" != "1" ]; then
 # ─── Startup: process any existing unread messages ───
 process_unread_once
 
+# ─── Auto-heal watchdog ───
+# If the CLI's TUI process has crashed, the pane drops back to a bare login
+# shell. Detect that (requiring 2 consecutive observations to avoid catching the
+# brief shell window during a normal switch_cli relaunch) and revive the agent.
+check_and_heal_dead_cli() {
+    [ "${ASW_AUTO_HEAL:-1}" = "1" ] || return 0
+
+    local pane_cmd
+    pane_cmd=$(timeout 2 tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
+
+    case "$pane_cmd" in
+        bash|sh|zsh|fish|-bash|-sh|-zsh)
+            DEAD_CLI_STREAK=$((DEAD_CLI_STREAK + 1))
+            ;;
+        *)
+            DEAD_CLI_STREAK=0
+            return 0
+            ;;
+    esac
+
+    # Require 2 consecutive dead detections (~30-60s of confirmed shell) before acting.
+    [ "$DEAD_CLI_STREAK" -ge 2 ] || return 0
+
+    local now
+    now=$(date +%s)
+    if [ "$LAST_HEAL_TS" -gt "$((now - HEAL_COOLDOWN_SEC))" ]; then
+        return 0  # cooldown active — relaunch already in progress
+    fi
+
+    local configured_cli
+    configured_cli=$(get_effective_cli_type)
+    echo "[$(date)] [AUTO-HEAL] $AGENT_ID CLI ($configured_cli) appears dead (pane_cmd=$pane_cmd, streak=$DEAD_CLI_STREAK). Relaunching via switch_cli.sh." >&2
+    LAST_HEAL_TS=$now
+    DEAD_CLI_STREAK=0
+    bash "${SCRIPT_DIR}/scripts/switch_cli.sh" "$AGENT_ID" 2>&1 | while IFS= read -r line; do
+        echo "[$(date)] [switch_cli] $line" >&2
+    done
+    return 0
+}
+
 # ─── Main loop: event-driven via inotifywait ───
 # Timeout 30s: WSL2 /mnt/c/ can miss inotify events.
 # Shorter timeout = faster escalation retry for stuck agents.
@@ -1334,6 +1403,7 @@ while true; do
     sleep 0.3
 
     if [ "$rc" -eq 2 ]; then
+        check_and_heal_dead_cli
         if [ "${ASW_PROCESS_TIMEOUT:-1}" = "1" ]; then
             process_unread "timeout"
         fi
